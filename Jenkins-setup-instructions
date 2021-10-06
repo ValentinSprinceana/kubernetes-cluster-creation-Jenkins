@@ -1,0 +1,79 @@
+Configure Jenkins
+
+All Sections
+No unread replies. No replies.
+What is Jenkins?
+
+Jenkins is an open-source server that lets you execute a series of actions to achieve the continuous integration (CI) process.
+
+Jenkins facilitates continuous integration and continuous delivery in software projects by automating parts related to builds, tests, and deployments. This makes it easy for developers to continuously work on the betterment of the product by integrating changes to the project.
+
+Jenkins also lets the developers know about the errors at an early stage.
+
+Jenkins-pipeline.jpeg
+
+Your Jenkins configuration will have Master and Slave pods. The Jenkins master pod schedules jobs, monitors slave states, and collects job results from slaves. Slave pods do what Master pod assigns them.
+
+Firstly, you need to deploy Jenkins Master pod in your Kubernetes cluster. 
+
+SSH into your machine (where you run kubectl commands against the Kubernetes cluster)
+Install Git
+Clone https://github.com/mshaibek/myapp-jenkins.git repository contents to the machine
+Deploy Kubernetes objects defined in myapp-jenkins/jenkins-v2.yaml file => kubectl apply -f myapp-jenkins/jenkins-v2.yaml
+Deploy Kubernetes objects defined in myapp-jenkins/clusterrole-binding.yaml file => kubectl apply -f myapp-jenkins/clusterrole-binding.yaml
+Now you have successfully deployed Jenkins Master pod.
+
+Jenkins.png
+
+In order to improve your system's security, you have to make sure that only you can access Jenkins Master pod (otherwise, anybody will be able to change your Jenkins configurations). Edit your Kubernetes cluster's Security Group by opening port 31000 and allowing traffic only from your public IP (your public IP can periodically change, so you have to update your Security Group frequently).
+
+ 
+
+Github Webhooks:
+
+Github Webhooks allow you to send an HTTP POST request to the configured URL when certain events occur on GitHub.com. In your case, webhooks will be used to trigger Jenkins builds. When a developer commits his/her changes to GitHub, a webhook will trigger a new Jenkins build.
+
+To integrate these webhooks, you need to allow GitHub to send requests to your Jenkins. Thus, GitHub provides GitHub Hook IPs for these needs. Edit your Kubernetes cluster's Security Group by opening port 31000 and allowing traffic from 192.30.252.0/22, 185.199.108.0/22, 140.82.112.0/20 IPs (https://api.github.com/meta).
+
+To integrate Github Webhooks with your Jenkins, sign in to your Github account.
+
+Go to the settings page of your repository (where you will commit your code). 
+Settings-1.png
+
+Click on Webhooks => Add Webhook
+Webhooks (1).png
+
+Set Payload URL to http://<EC2-public-IP>:31000/github-webhook/Links to an external site. (where your Jenkins master pod is deployed) => Add webhook
+add-webhook-1.png
+
+ 
+
+Jenkins configuration:
+
+In your browser open EC2_public_IP:31000 (IP where Jenkins master pod is deployed).
+
+You have to add your GitHub credentials to Jenkins: Manage.png
+Manage Jenkins => Manage Credentials => Jenkins => Global credentials => Add credentials (username and SSH private key)
+Credentials.pngssh.png
+
+If you don't have an SSH key, create it (https://docs.github.com/en/github/authenticating-to-github/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#generating-a-new-ssh-key (Links to an external site.))
+Add your GitHub username, ID, description
+Copy and paste your private key to the 'Private Key' section (the screenshot above)
+Copy and paste your public key to your GitHub account (https://docs.github.com/en/github/authenticating-to-github/adding-a-new-ssh-key-to-your-github-account (Links to an external site.))
+Then you have to set Kubernetes configuration in Jenkins: Manage Jenkins => Manage Nodes and Clouds => Configure Clouds => Choose 'Kubernetes' => Kubernetes Cloud details.
+kube.png
+
+Set Kubernetes URL to “https://kubernetes.default:443” and Jenkins URL to “http://jenkins-svc:8080” (DNS name of a service created using jenkins-v2.yaml file). Also disable HTTPS certificate check.
+cloud.png
+
+Now, you have to configure a Pipeline job in Jenkins: (main page) => New Item => Give a name to your Pipeline (choose Multibranch Pipeline) => add a Branch Source (choose Git, choose credentials and enter your GitHub repository SSH URL).
+ 
+
+Manage.png
+
+ 
+
+312.pnggit-credentials.png
+
+Create Jenkinsfile (in your case there isn't a Jenkinsfile in the repository). A Jenkinsfile is a text file that contains the definition of a Jenkins Pipeline and is checked into source control. It basically contains the instructions for Jenkins.
+Now every time you push new changes to the repository, GitHub Webhook will trigger a new Jenkins job.

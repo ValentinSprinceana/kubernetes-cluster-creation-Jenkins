@@ -1,0 +1,175 @@
+Kubernetes Cluster creation
+
+All Sections
+No unread replies. No replies.
+Note: Make sure you follow all the steps carefully. If you miss any of the steps, you are likely to have issues.
+
+ 
+
+Create 3 EC2 instances:
+Amazon Linux 2 AMI; t2.micro instance type
+Default VPC, one subnet (us-east-1a)
+Create new IAM role (name: kube-node-install-role) with AdministratorAccess
+Attach “kube-node-install-role” IAM role to EC2 instances
+Add two tags to the EC2 instances: 
+Name = K8s-cluster
+kubernetes.io/cluster/K8s-cluster = true
+Create new Security Group (name: K8s-cluster Security Group) with the following rules:
+Open SSH port to everyone
+Allow all traffic from K8s-cluster Security Group for cluster internal traffic
+Open 6443 port to everyone to allow connection to Kube API server
+Choose one EC2 instance and tag it as K8s-cluster-Master
+Tag the other EC2 instances as K8s-cluster-Worker-1 or 2
+
+
+SSH to Master node and run the following commands:
+sudo su -
+modprobe br_netfilter
+lsmod | grep br_netfilter
+
+cat <<EOF > /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+
+sysctl --system
+yum update -y
+amazon-linux-extras install docker -y
+service docker start
+systemctl enable docker.service
+usermod -aG docker ec2-user
+
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+
+setenforce 0
+sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+yum install -y kubelet-1.18.1 kubeadm-1.18.1 kubectl --disableexcludes=kubernetes
+systemctl enable --now kubelet
+
+cat << EOF | tee kubeadm.yaml
+---
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: ClusterConfiguration
+clusterName: K8s-cluster
+kubernetesVersion: v1.18.1
+networking:
+ dnsDomain: cluster.local
+ podSubnet: 10.244.0.0/16
+ serviceSubnet: 10.96.0.0/12
+apiServer:
+ extraArgs:
+   authorization-mode: Node,RBAC
+   cloud-provider: aws
+ timeoutForControlPlane: 4m0s
+controllerManager:
+ extraArgs:
+   cloud-provider: aws
+   configure-cloud-routes: "false"
+---
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: InitConfiguration
+nodeRegistration:
+ kubeletExtraArgs:
+   cloud-provider: aws
+EOF
+
+sleep 120
+kubeadm init --ignore-preflight-errors=NumCPU --upload-certs --config=kubeadm.yaml
+
+#To start using your cluster, you need to run the following as a regular user:
+ mkdir -p $HOME/.kube
+ sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+ sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+# Install flannel
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
+echo DONE
+
+Copy “kubeadm join <API-HOST> --token <TOKEN> \
+    --discovery-token-ca-cert-hash <CACERT>” from the output
+
+
+
+  3. SSH to both of the Worker nodes and run the following commands:
+
+sudo su -
+modprobe br_netfilter
+lsmod | grep br_netfilter
+
+cat <<EOF > /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+EOF
+
+sysctl --system
+yum update -y
+amazon-linux-extras install docker -y
+service docker start
+systemctl enable docker.service
+usermod -aG docker ec2-user
+
+cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+exclude=kubelet kubeadm kubectl
+EOF
+
+setenforce 0
+sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+yum install -y kubelet-1.18.1 kubeadm-1.18.1 kubectl --disableexcludes=kubernetes
+systemctl enable --now kubelet
+
+cat << EOF | tee vars.txt
+TOKEN=ovhhix.uz772vsbw5ie27sb
+APIHOST=172.31.47.131:6443
+CACERT=sha256:c3728ecebf69011a688afd584d1b66694e50382c932dde97451adadd3885c050
+EOF
+
+echo DONE
+
+ 
+
+  4. After running the above commands in Worker nodes, you will have a file called “vars.txt” in your current directory. Change the TOKEN, APIHOST, CACERT values to the values that you copied in step 3. Save and exit.
+
+
+
+  5. After you’ve edited “vars.txt” file, run the following commands in Worker nodes:
+
+
+source vars.txt
+
+cat <<  EOF | sed "s/WORKER_HOSTNAME/$HOSTNAME/g;s/TOKEN/$TOKEN/g;s/APIHOST/$APIHOST/g;s/CACERT/$CACERT/g" | tee kubeadm-join.yaml
+---
+apiVersion: kubeadm.k8s.io/v1beta2
+kind: JoinConfiguration
+discovery:
+ bootstrapToken:
+   token: TOKEN
+   apiServerEndpoint: "APIHOST"
+   caCertHashes: ["CACERT"]
+nodeRegistration:
+ name: WORKER_HOSTNAME
+ kubeletExtraArgs:
+   cloud-provider: aws
+EOF
+
+kubeadm join --config=kubeadm-join.yaml
+echo DONE
+
+
+
+ 6. You have set up your cluster. To make sure that your nodes joined the cluster run the following command from the master node: kubectl get nodes. You have to see 3 nodes: one master and two worker nodes
